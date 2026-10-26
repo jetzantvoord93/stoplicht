@@ -1,5 +1,5 @@
 // Service worker: offline openen en pushmeldingen tonen.
-const CACHE = "stoplicht-v3";
+const CACHE = "stoplicht-v4";
 const ASSETS = ["./", "./index.html", "./tips.js", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
 self.addEventListener("install", e => {

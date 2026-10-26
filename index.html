@@ -1083,8 +1083,14 @@ rebuild();
 loadDraft(null);
 show("nu");
 updateBanner();
+const hadController=!!(navigator.serviceWorker&&navigator.serviceWorker.controller);
 if("serviceWorker" in navigator){
-  navigator.serviceWorker.register("sw.js").catch(()=>{});
+  navigator.serviceWorker.register("sw.js").then(reg=>{
+    document.addEventListener("visibilitychange",()=>{if(!document.hidden)reg.update().catch(()=>{})});
+  }).catch(()=>{});
+  // Een nieuwe versie neemt het over: herlaad, zodat je nooit met een oude app werkt.
+  let reloading=false;
+  navigator.serviceWorker.addEventListener("controllerchange",()=>{if(reloading||!hadController)return;reloading=true;location.reload()});
   navigator.serviceWorker.addEventListener("message",e=>{if(e.data&&e.data.type==="melding")show("nu")});
 }
 document.addEventListener("visibilitychange",()=>{if(!document.hidden){renderToday();updateBanner()}});
