@@ -99,6 +99,9 @@ export function payloadFor(index, count, date) {
   return { ...m, url: "./?bron=melding", tag: "stoplicht-" + index };
 }
 
+const report = [];
+const log = (...a) => { const line = a.join(" "); report.push(line); console.log(line); };
+
 async function main() {
   const codes = (process.env.PUSH_CONFIG || readRepoFile("../meldingen/codes.txt")).split(/\s+/).filter(Boolean);
   if (!codes.length) { console.log("Nog geen meldingscode in meldingen/codes.txt. Niets te doen."); return; }
@@ -116,21 +119,22 @@ async function main() {
   let failed = 0, sent = 0;
   for (const code of codes) {
     let cfg;
-    try { cfg = decodeCode(code, box && box.privateJwk); } catch (e) { console.error("Meldingscode overgeslagen:", e.message); failed++; continue; }
+    try { cfg = decodeCode(code, box && box.privateJwk); } catch (e) { log("Meldingscode overgeslagen:", e.message); failed++; continue; }
     const due = force ? [-1] : dueIndexes(cfg.times, slot);
     for (const i of due) {
       const payload = i === -1 ? { title: "Stoplicht", body: "Testmelding: meldingen werken.", url: "./?bron=melding", tag: "stoplicht-test" } : payloadFor(i, cfg.times.length, now);
       try {
         await webpush.sendNotification(cfg.sub, JSON.stringify(payload), { TTL: 3 * 3600, urgency: "high" });
-        sent++; console.log(`Verstuurd: ${payload.title}`);
+        sent++; log(`Verstuurd: ${payload.title}`);
       } catch (e) {
         failed++;
-        if (e.statusCode === 404 || e.statusCode === 410) console.error("Dit abonnement is verlopen. Open de app, zet meldingen opnieuw aan en vervang de code in PUSH_CONFIG.");
-        else console.error("Versturen mislukt:", e.statusCode || "", e.body || e.message);
+        if (e.statusCode === 404 || e.statusCode === 410) log("Dit abonnement is verlopen. Zet meldingen opnieuw aan in de app en stuur de nieuwe code.");
+        else log("Versturen mislukt:", String(e.statusCode || ""), String(e.body || e.message).slice(0, 300));
       }
     }
   }
-  console.log(`Slot ${slot.toISOString()}: ${sent} verstuurd, ${failed} mislukt.`);
+  log(`Slot ${slot.toISOString()}: ${sent} verstuurd, ${failed} mislukt.`);
+  if (force || failed) fs.writeFileSync(new URL("../meldingen/status.txt", import.meta.url), `${new Date().toISOString()}\n${report.join("\n")}\n`);
   if (failed) process.exitCode = 1;
 }
 
