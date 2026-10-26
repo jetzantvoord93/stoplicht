@@ -864,6 +864,20 @@ async function getSub(){
 }
 async function fetchText(path){try{const r=await fetch(path,{cache:"no-store"});return r.ok?(await r.text()).trim():""}catch{return ""}}
 function bufToB64u(buf){return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}
+async function fingerprint(plain){const h=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(plain));return [...new Uint8Array(h)].slice(0,8).map(b=>b.toString(16).padStart(2,"0")).join("")}
+// Versleutelt de code met de publieke sleutel van de verzender (ECDH P-256 + HKDF + AES-GCM),
+// zodat hij veilig in de openbare repository kan staan.
+async function encryptCode(plain,boxJwk){
+  const pub=await crypto.subtle.importKey("jwk",boxJwk,{name:"ECDH",namedCurve:"P-256"},false,[]);
+  const eph=await crypto.subtle.generateKey({name:"ECDH",namedCurve:"P-256"},true,["deriveBits"]);
+  const bits=await crypto.subtle.deriveBits({name:"ECDH",public:pub},eph.privateKey,256);
+  const hk=await crypto.subtle.importKey("raw",bits,"HKDF",false,["deriveKey"]);
+  const key=await crypto.subtle.deriveKey({name:"HKDF",hash:"SHA-256",salt:new Uint8Array(0),info:new TextEncoder().encode("stoplicht-code")},hk,{name:"AES-GCM",length:256},false,["encrypt"]);
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(plain));
+  const e=await crypto.subtle.exportKey("jwk",eph.publicKey);
+  return `enc1.${await fingerprint(plain)}.${toB64u(JSON.stringify({epk:{kty:e.kty,crv:e.crv,x:e.x,y:e.y},iv:bufToB64u(iv),ct:bufToB64u(ct)}))}`;
+}
 function pushCode(sub){
   const j=sub.toJSON();
   return toB64u(JSON.stringify({e:j.endpoint,k:{p256dh:j.keys.p256dh,auth:j.keys.auth},t:S.settings.reminders||DEFAULT_SETTINGS.reminders}));
@@ -890,9 +904,13 @@ async function renderPush(){
     box.innerHTML=`<p class="small">De verzender heeft een nieuwe sleutel gekregen. Zet meldingen één keer opnieuw aan; daarna krijg je een nieuwe code.</p><div class="row"><button class="btn primary" data-act="push-renew">Meldingen opnieuw aanzetten</button></div>`;
     return;
   }
-  const code=pushCode(sub);
+  const plain=pushCode(sub);
+  const boxTxt=await fetchText("meldingen/box-public.txt");
+  if(!boxTxt){box.innerHTML=`<p class="small">De verzender is nog niet klaar. Probeer het over een paar minuten opnieuw.</p>`;return}
+  let code;
+  try{code=await encryptCode(plain,JSON.parse(boxTxt))}catch{box.innerHTML=`<p class="small">Je code kon niet worden aangemaakt. Werk iOS bij en probeer het opnieuw.</p>`;return}
   const codes=await fetchText("meldingen/codes.txt");
-  const linked=codes.split(/\s+/).includes(code);
+  const linked=codes.includes(`enc1.${await fingerprint(plain)}.`)||codes.split(/\s+/).includes(plain);
   box.innerHTML=`
     <p class="small"><span class="ok">✓ Meldingen staan aan op dit toestel.</span> <button class="btn link" data-act="push-test">Testmelding op dit toestel</button></p>
     <h3>${linked?'<span class="ok">✓</span> Gekoppeld aan de verzender':"Nog niet gekoppeld"}</h3>

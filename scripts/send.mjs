@@ -12,6 +12,7 @@
 //   FORCE              "true" = stuur direct een testmelding
 
 import fs from "fs";
+import crypto from "crypto";
 import webpush from "web-push";
 import "../tips.js";
 
@@ -19,7 +20,25 @@ const TZ = "Europe/Amsterdam";
 const WINDOW_MIN = 30;
 const readRepoFile = rel => { try { return fs.readFileSync(new URL(rel, import.meta.url), "utf8").trim(); } catch { return ""; } };
 
-export function decodeCode(code) {
+// Versleutelde code uit de app: "enc1.<vingerafdruk>.<payload>", ECDH P-256 + HKDF + AES-256-GCM.
+export function decryptCode(line, privateJwk) {
+  const p = JSON.parse(Buffer.from(line.split(".")[2], "base64url").toString("utf8"));
+  const shared = crypto.diffieHellman({
+    privateKey: crypto.createPrivateKey({ key: privateJwk, format: "jwk" }),
+    publicKey: crypto.createPublicKey({ key: p.epk, format: "jwk" }),
+  });
+  const key = Buffer.from(crypto.hkdfSync("sha256", shared, Buffer.alloc(0), Buffer.from("stoplicht-code"), 32));
+  const ct = Buffer.from(p.ct, "base64url");
+  const d = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(p.iv, "base64url"));
+  d.setAuthTag(ct.subarray(ct.length - 16));
+  return Buffer.concat([d.update(ct.subarray(0, ct.length - 16)), d.final()]).toString("utf8");
+}
+
+export function decodeCode(code, boxJwk) {
+  if (code.startsWith("enc1.")) {
+    if (!boxJwk) throw new Error("versleutelde code, maar sleutel ontbreekt (.box/keys.json)");
+    code = decryptCode(code, boxJwk);
+  }
   const json = Buffer.from(code.trim(), "base64url").toString("utf8");
   const c = JSON.parse(json);
   if (!c.e || !c.k?.p256dh || !c.k?.auth) throw new Error("ongeldige meldingscode");
@@ -86,6 +105,7 @@ async function main() {
   const keys = JSON.parse(readRepoFile("../.vapid/keys.json") || "null");
   if (!keys) throw new Error("Sleutelpaar ontbreekt (.vapid/keys.json).");
   webpush.setVapidDetails("https://github.com/jetzantvoord93/stoplicht", keys.publicKey, keys.privateKey);
+  const box = JSON.parse(readRepoFile("../.box/keys.json") || "null");
 
   const now = new Date();
   const force = process.env.FORCE === "true";
@@ -96,7 +116,7 @@ async function main() {
   let failed = 0, sent = 0;
   for (const code of codes) {
     let cfg;
-    try { cfg = decodeCode(code); } catch (e) { console.error("Meldingscode overgeslagen:", e.message); failed++; continue; }
+    try { cfg = decodeCode(code, box && box.privateJwk); } catch (e) { console.error("Meldingscode overgeslagen:", e.message); failed++; continue; }
     const due = force ? [-1] : dueIndexes(cfg.times, slot);
     for (const i of due) {
       const payload = i === -1 ? { title: "Stoplicht", body: "Testmelding: meldingen werken.", url: "./?bron=melding", tag: "stoplicht-test" } : payloadFor(i, cfg.times.length, now);

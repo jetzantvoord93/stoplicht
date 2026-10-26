@@ -6,7 +6,7 @@ name: Meldingen
 on:
   push:
     branches: [main]
-    paths: ["meldingen/codes.txt", ".github/workflows/meldingen.yml"]
+    paths: ["meldingen/codes.txt", ".github/workflows/meldingen.yml", "scripts/**"]
   schedule:
     - cron: "1 * * * *"
     - cron: "31 * * * *"
@@ -44,6 +44,12 @@ jobs:
         with:
           path: .vapid
           key: vapid-v1
+      - name: Codesleutel ophalen
+        id: box
+        uses: actions/cache/restore@v4
+        with:
+          path: .box
+          key: box-v1
       - name: Sleutels maken of controleren
         run: node scripts/keys.mjs
       - name: Sleutels bewaren
@@ -52,9 +58,15 @@ jobs:
         with:
           path: .vapid
           key: vapid-v1
+      - name: Codesleutel bewaren
+        if: steps.box.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .box
+          key: box-v1
       - name: Publieke sleutel publiceren
         run: |
-          git add meldingen/vapid-public.txt
+          git add meldingen/vapid-public.txt meldingen/box-public.txt
           if ! git diff --cached --quiet; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
