@@ -1,0 +1,53 @@
+name: Meldingen
+
+# Elk half uur kijkt dit of er een herinnering verstuurd moet worden.
+# De tijden staan in je meldingscode (secret PUSH_CONFIG), in Nederlandse tijd.
+on:
+  schedule:
+    - cron: "1 * * * *"
+    - cron: "31 * * * *"
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Stuur nu een testmelding"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: meldingen
+  cancel-in-progress: false
+
+jobs:
+  versturen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Herinneringen versturen
+        run: node scripts/send.mjs
+        env:
+          PUSH_CONFIG: ${{ secrets.PUSH_CONFIG }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          SCHEDULE: ${{ github.event.schedule }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
+      # GitHub zet geplande taken uit na 60 dagen zonder activiteit in de repository.
+      # Op de 1e en 15e van de maand maakt deze stap daarom een kleine commit.
+      - name: Actief houden
+        if: github.event.schedule == '1 * * * *'
+        run: |
+          if [ "$(date -u +%H)" = "03" ] && { [ "$(date -u +%d)" = "01" ] || [ "$(date -u +%d)" = "15" ]; }; then
+            date -u +%F > .keepalive
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .keepalive
+            git commit -m "Geplande meldingen actief houden" || true
+            git push || true
+          fi

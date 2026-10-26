@@ -1,0 +1,16 @@
+{
+  "name": "Stoplicht Dagboek",
+  "short_name": "Stoplicht",
+  "description": "Houd bij of je op groen, oranje of rood staat en leer van je patronen.",
+  "lang": "nl",
+  "start_url": "./?bron=beginscherm",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F2F4F3",
+  "theme_color": "#1D2422",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

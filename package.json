@@ -1,0 +1,9 @@
+{
+  "name": "stoplicht",
+  "private": true,
+  "description": "Stoplicht Dagboek: web-app en pushmeldingen",
+  "type": "module",
+  "dependencies": {
+    "web-push": "3.6.7"
+  }
+}
