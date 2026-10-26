@@ -362,7 +362,6 @@ ol.steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;f
 <script>
 "use strict";
 const APP_URL = location.origin + location.pathname.replace(/index\.html$/,"");
-const VAPID_PUBLIC = "BLIxzzdey4HkzAjRmDLGBNrgpliyG2QAJJhNdnDOD5EB0QEt4x_vY7oZctwcW-bQq7ZAMOpMeKfpIlUmwy13rdA";
 const REPO = "https://github.com/jetzantvoord93/stoplicht";
 
 /* ================= inhoud ================= */
@@ -863,6 +862,8 @@ async function getSub(){
   if(!("serviceWorker" in navigator)||!("PushManager" in window)) return null;
   try{const reg=await navigator.serviceWorker.ready;return await reg.pushManager.getSubscription()}catch{return null}
 }
+async function fetchText(path){try{const r=await fetch(path,{cache:"no-store"});return r.ok?(await r.text()).trim():""}catch{return ""}}
+function bufToB64u(buf){return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}
 function pushCode(sub){
   const j=sub.toJSON();
   return toB64u(JSON.stringify({e:j.endpoint,k:{p256dh:j.keys.p256dh,auth:j.keys.auth},t:S.settings.reminders||DEFAULT_SETTINGS.reminders}));
@@ -883,22 +884,23 @@ async function renderPush(){
     box.innerHTML=`<p class="small muted">Stel hierboven je tijden in en tik op de knop. Je iPhone vraagt daarna om toestemming.</p><div class="row"><button class="btn primary" data-act="push-on">Meldingen aanzetten</button></div>`;
     return;
   }
-  const code=pushCode(sub), linked=lsGet(LS.linked,"")===code;
+  const vapid=await fetchText("meldingen/vapid-public.txt");
+  const subKey=sub.options&&sub.options.applicationServerKey?bufToB64u(sub.options.applicationServerKey):"";
+  if(vapid&&subKey&&subKey!==vapid){
+    box.innerHTML=`<p class="small">De verzender heeft een nieuwe sleutel gekregen. Zet meldingen één keer opnieuw aan; daarna krijg je een nieuwe code.</p><div class="row"><button class="btn primary" data-act="push-renew">Meldingen opnieuw aanzetten</button></div>`;
+    return;
+  }
+  const code=pushCode(sub);
+  const codes=await fetchText("meldingen/codes.txt");
+  const linked=codes.split(/\s+/).includes(code);
   box.innerHTML=`
     <p class="small"><span class="ok">✓ Meldingen staan aan op dit toestel.</span> <button class="btn link" data-act="push-test">Testmelding op dit toestel</button></p>
-    <h3>${linked?'<span class="ok">✓</span> Gekoppeld aan de verzender':"Laatste stap: koppel je code aan de verzender"}</h3>
+    <h3>${linked?'<span class="ok">✓</span> Gekoppeld aan de verzender':"Nog niet gekoppeld"}</h3>
     ${linked?`<p class="small muted">Je krijgt meldingen om ${esc((S.settings.reminders||[]).join(", "))}. Pas je de tijden aan, dan verandert je code en moet je hem opnieuw plakken.</p>`:
-    `<ol class="steps">
-      <li>Kopieer de code hieronder.</li>
-      <li>Open de <a href="${REPO}/settings/secrets/actions" target="_blank" rel="noopener">geheime instellingen op GitHub</a> en tik bij <b>PUSH_CONFIG</b> op het potlood, of kies <b>New repository secret</b> met die naam.</li>
-      <li>Plak de code, sla op en tik hieronder op ‘Ik heb hem geplakt’.</li>
-    </ol>
-    <p class="small muted">Je kunt de code ook naar Claude sturen; die zet hem dan voor je klaar.</p>`}
+    `<p class="small">Kopieer de code hieronder en stuur hem naar Claude. Die koppelt hem en je krijgt meteen een testmelding. Dit is alleen nodig de eerste keer, als je je tijden aanpast of als je een nieuwe telefoon hebt.</p>`}
     <textarea class="codebox" id="push-code" readonly>${esc(code)}</textarea>
     <div class="row">
       <button class="btn" data-act="push-copy">Kopieer code</button>
-      ${linked?"":`<button class="btn" data-act="push-linked">Ik heb hem geplakt</button>`}
-      <a class="btn" style="display:inline-flex;align-items:center;text-decoration:none;color:inherit" href="${REPO}/actions/workflows/meldingen.yml" target="_blank" rel="noopener">Test via GitHub</a>
     </div>
     <p class="small muted">Meldingen komen meestal binnen een kwartier na de ingestelde tijd; GitHub draait de verzender soms iets later. <button class="btn link" data-act="push-off">Meldingen uitzetten</button></p>`;
 }
@@ -907,9 +909,12 @@ async function enablePush(btn){
   try{
     const perm=await Notification.requestPermission();
     if(perm!=="granted"){toast("Meldingen niet toegestaan");return}
+    const vapid=await fetchText("meldingen/vapid-public.txt");
+    if(!vapid){toast("De verzender is nog niet klaar. Probeer het over een paar minuten opnieuw.");return}
     const reg=await navigator.serviceWorker.ready;
     let sub=await reg.pushManager.getSubscription();
-    if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64uToU8(VAPID_PUBLIC)});
+    if(sub&&btn.dataset.act==="push-renew"){await sub.unsubscribe();sub=null}
+    if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64uToU8(vapid)});
     toast("Meldingen staan aan");
   }catch(e){toast("Aanzetten lukte niet: "+(e&&e.message||e))}
   finally{btn.disabled=false;renderPush();updateBanner()}
@@ -920,7 +925,7 @@ async function testLocal(){
 }
 async function disablePush(){
   const sub=await getSub(); if(sub){try{await sub.unsubscribe()}catch{}}
-  lsSet(LS.linked,""); toast("Meldingen uitgezet"); renderPush();
+  toast("Meldingen uitgezet"); renderPush();
 }
 function copyText(text,el){
   const fallback=()=>{if(el){el.focus();el.select&&el.select()}toast("Geselecteerd, kies Kopieer")};
@@ -1028,11 +1033,10 @@ document.addEventListener("click",e=>{
   const act=t.closest("[data-act]")?.dataset.act;
   if(act==="tipnow-close"){S.tipNow=null;renderTipNow()}
   else if(act==="reflect") copyForClaude();
-  else if(act==="push-on") enablePush(t.closest("button"));
+  else if(act==="push-on"||act==="push-renew") enablePush(t.closest("button"));
   else if(act==="push-test") testLocal();
   else if(act==="push-off") disablePush();
   else if(act==="push-copy") copyText($("#push-code").value,$("#push-code"));
-  else if(act==="push-linked"){lsSet(LS.linked,$("#push-code").value);renderPush();toast("Gekoppeld")}
   else if(act==="rpt-close"){$("#rpt").hidden=true;$("#rpt-frame").srcdoc=""}
   else if(act==="rpt-print"){try{const w=$("#rpt-frame").contentWindow;w.focus();w.print()}catch{toast("Afdrukken lukte niet; kies Delen")}}
   else if(act==="rpt-share"){if(currentReport)shareFile(currentReport.filename,currentReport.html,"text/html")}

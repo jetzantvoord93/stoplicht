@@ -3,18 +3,21 @@
 // herinneringstijden in het half uur vóór zijn geplande tijdstip, zodat een
 // vertraagde run geen melding mist of dubbel verstuurt.
 //
+// Meldingscodes staan in meldingen/codes.txt (één per regel). Het VAPID-sleutelpaar
+// staat in .vapid/keys.json, dat de workflow uit de Actions-cache haalt.
+//
 // Omgeving:
-//   PUSH_CONFIG        een of meer meldingscodes uit de app (één per regel)
-//   VAPID_PRIVATE_KEY  geheime sleutel bij VAPID_PUBLIC_KEY hieronder
+//   PUSH_CONFIG        optioneel: meldingscodes, overschrijft codes.txt
 //   SCHEDULE           de cron-regel die deze run startte (door GitHub gevuld)
 //   FORCE              "true" = stuur direct een testmelding
 
+import fs from "fs";
 import webpush from "web-push";
 import "../tips.js";
 
-export const VAPID_PUBLIC_KEY = "BLIxzzdey4HkzAjRmDLGBNrgpliyG2QAJJhNdnDOD5EB0QEt4x_vY7oZctwcW-bQq7ZAMOpMeKfpIlUmwy13rdA";
 const TZ = "Europe/Amsterdam";
 const WINDOW_MIN = 30;
+const readRepoFile = rel => { try { return fs.readFileSync(new URL(rel, import.meta.url), "utf8").trim(); } catch { return ""; } };
 
 export function decodeCode(code) {
   const json = Buffer.from(code.trim(), "base64url").toString("utf8");
@@ -78,10 +81,11 @@ export function payloadFor(index, count, date) {
 }
 
 async function main() {
-  const codes = (process.env.PUSH_CONFIG || "").split(/\s+/).filter(Boolean);
-  if (!codes.length) { console.log("Nog geen meldingscode ingesteld (secret PUSH_CONFIG). Niets te doen."); return; }
-  if (!process.env.VAPID_PRIVATE_KEY) throw new Error("Secret VAPID_PRIVATE_KEY ontbreekt.");
-  webpush.setVapidDetails("https://github.com/jetzantvoord93/stoplicht", VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+  const codes = (process.env.PUSH_CONFIG || readRepoFile("../meldingen/codes.txt")).split(/\s+/).filter(Boolean);
+  if (!codes.length) { console.log("Nog geen meldingscode in meldingen/codes.txt. Niets te doen."); return; }
+  const keys = JSON.parse(readRepoFile("../.vapid/keys.json") || "null");
+  if (!keys) throw new Error("Sleutelpaar ontbreekt (.vapid/keys.json).");
+  webpush.setVapidDetails("https://github.com/jetzantvoord93/stoplicht", keys.publicKey, keys.privateKey);
 
   const now = new Date();
   const force = process.env.FORCE === "true";
